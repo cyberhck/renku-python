@@ -388,6 +388,7 @@ class RepositoryApiMixin(GitCore):
             if self.repo is not None:
                 raise FileExistsError(self.repo.git_dir)
 
+            # ? create .renku dir
             self.renku_path.mkdir(parents=True, exist_ok=force)
             self.repo = Repo.init(str(path))
 
@@ -395,9 +396,12 @@ class RepositoryApiMixin(GitCore):
 
         # Check that an creator can be determined from Git.
         from renku.core.models.creators import Creator
+        # ? create .git dir
         Creator.from_git(self.repo)
 
         # TODO read existing gitignore and create a unique set of rules
+
+        # ? create gitignore
         import pkg_resources
         gitignore_default = pkg_resources.resource_stream(
             'renku.data', 'gitignore.default'
@@ -417,3 +421,33 @@ class RepositoryApiMixin(GitCore):
             metadata.updated = datetime.now(timezone.utc)
 
         return str(path)
+
+    def init_empty_repository(self, force=False):
+        """Initialize an empty Renku repository."""
+        from git import Repo
+
+        if self.repo is not None and not force:
+            raise FileExistsError(self.repo.git_dir)
+
+        path = self.path.absolute()
+        # ? this creates the .renku, I don't want it :(
+        # self.renku_path.mkdir(parents=True, exist_ok=force)
+        # ? this creates the .git, which is fine :)
+        self.repo = Repo.init(str(path))
+
+        return str(path)
+
+    def update_repository_metadata(self, name=None, description=None):
+        """Update renku metadata after cloning a template."""
+        from renku.core.models.creators import Creator
+
+        # Update description
+        if description:
+            self.repo.description = description
+
+        # Update creator and metadata
+        if not self.renku_path.exists():
+            self.renku_path.mkdir()
+        Creator.from_git(self.repo)
+        with self.with_metadata(name=name) as metadata:
+            metadata.updated = datetime.now(timezone.utc)

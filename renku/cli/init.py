@@ -67,6 +67,7 @@ was not installed previously.
 import contextlib
 import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import attr
 import click
@@ -169,6 +170,7 @@ def init(ctx, client, directory, name, force, use_external_storage):
         )
 
     try:
+        # ? create .renku.lock
         with client.lock:
             path = client.init_repository(name=name, force=force)
     except FileExistsError:
@@ -186,6 +188,108 @@ def init(ctx, client, directory, name, force, use_external_storage):
         ctx.invoke(install, force=force)
 
         # Create all necessary template files.
+        # ? Copy template files
         template(client, force=force)
 
     click.echo(msg.format(path=path, branch_name=branch_name))
+
+
+@click.command()
+@click.argument(
+    'path',
+    default='.',
+    callback=store_directory,
+    type=click.Path(writable=True, file_okay=False, resolve_path=True),
+)
+@click.option(
+    '--name',
+    'name',
+    default='Renku project',
+    show_default=True,
+    callback=validate_name,
+    help='Project name.',
+)
+@click.option(
+    '--template-url',
+    required=True,
+    help='Provide templates repository URL (GitHub or GitLab allowed).'
+    # implement a required-if
+    # https://stackoverflow.com/questions/44247099/click-command-line-interfaces-make-options-required-if-other-optional-option-is
+)
+@click.option('--template-name', required=True, help='Provide template name.')
+@click.option(
+    '--template-branch',
+    default='master',
+    help='Change templates target branch.',
+)
+@click.option('--force', is_flag=True, help='Override target path.')
+@click.option('--description', help='Describe your project.')
+@option_use_external_storage
+@pass_local_client
+@click.pass_context
+def template_init(
+    ctx,
+    client,
+    use_external_storage,
+    path,
+    name,
+    template_url,
+    template_name,
+    template_branch,
+    force,
+    description,
+):
+    """Initialize a project in PATH. Default is current path."""
+    from renku.core.commands.init import (
+        fetch_remote_template,
+        validate_template,
+    )
+
+    if not client.use_external_storage:
+        use_external_storage = False
+
+    ctx.obj = client = attr.evolve(
+        client, path=path, use_external_storage=use_external_storage
+    )
+
+    with TemporaryDirectory() as tmpfolder:
+        message = (
+            f'Fetching template "{template_name}" '
+            f'from {template_url}@{template_branch}...'
+        )
+        click.echo(message, nl=False)
+        template_path = fetch_remote_template(
+            tmpfolder, template_url, template_name, template_branch
+        )
+        click.echo(' DONE')
+
+        message = f'Validating template...'
+        click.echo(message, nl=False)
+        validate_template(template_path)
+        click.echo(' DONE')
+
+        message = f'Initialize new Renku repository...'
+        click.echo(message, nl=False)
+        # init_repository(ctx, client, force, description)
+        click.echo('TO BE IMPLEMENTED')
+
+    # ? uncomment for printing arguments
+    # click.echo(f'''
+    # *** TEMP: provided data:***
+    # path: {path}
+    # name: {name}
+    # template_url: {template_url}
+    # template_name: {template_name}
+    # template_branch: {template_branch}
+    # force: {force}
+    # description: {description}''')
+
+    # STEPS IN CORE
+    # D - verify template is a valid git repo with renku template files
+    #   (e.g.
+    #   https://github.com/SwissDataScienceCenter/renku-project-template.git)
+    #   including template_branch
+    # D - copy data to a local folder
+    # D - validate template data
+    # U - initialize new git repo with the files and the commit
+    # push (copy to relevant location if FS or push to GitLab if UI)
