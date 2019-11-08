@@ -4,7 +4,8 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-renku = {editable = true, extras = ["all"], path = "."}
+renku = {editable = true,extras = ["all"],path = "."}
+jinja2 = "*"
 
 [dev-packages]
 

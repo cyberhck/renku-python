@@ -19,6 +19,7 @@
 import os
 import subprocess
 import uuid
+import shutil
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -27,6 +28,8 @@ from subprocess import check_output
 import attr
 import filelock
 import yaml
+import jinja2
+from jinja2 import Template, Environment, meta, contextfunction
 from werkzeug.utils import cached_property, secure_filename
 
 from renku.core.compat import Path
@@ -435,8 +438,34 @@ class RepositoryApiMixin(GitCore):
         # ? this creates the .git, which is fine :)
         self.repo = Repo.init(str(path))
 
-        return str(path)
+        return path
 
+    def import_from_template(self, template_path, metadata, force=False):
+        for file in template_path.glob('**/*'):
+            destination = self.path / file.relative_to(template_path)
+            try:
+                # TODO: notify about the expected variables - code stub:
+                # with file.open() as fr:
+                #     file_content = fr.read()
+                #     # look for the required keys
+                #     env = Environment()
+                #     parsed = env.parse(file_content)
+                #     variables = meta.find_undeclared_variables(parsed)
+                with open(file) as file_content:
+                    # open and parse the file
+                    template = Template(file_content.read())
+                    rendered_content = template.render(metadata)
+                    # write content to the new location
+                    with open(destination, 'w') as output_file:
+                        output_file.write(rendered_content)
+            except Exception:
+                if file.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                else:
+                    shutil.copy(file, destination)
+
+    # TODO this is probably not needed, or at least the description/name part
+    # it will come from the repo / jinja templating
     def update_repository_metadata(self, name=None, description=None):
         """Update renku metadata after cloning a template."""
         from renku.core.models.creators import Creator

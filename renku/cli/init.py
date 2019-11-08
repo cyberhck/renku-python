@@ -213,7 +213,7 @@ def init(ctx, client, directory, name, force, use_external_storage):
     '--template-url',
     required=True,
     help='Provide templates repository URL (GitHub or GitLab allowed).'
-    # implement a required-if
+    # TODO: implement a required-if
     # https://stackoverflow.com/questions/44247099/click-command-line-interfaces-make-options-required-if-other-optional-option-is
 )
 @click.option('--template-name', required=True, help='Provide template name.')
@@ -240,9 +240,13 @@ def template_init(
     description,
 ):
     """Initialize a project in PATH. Default is current path."""
+
+    def print_done():
+        click.echo(' DONE ', nl=False)
+        click.echo(click.style('\u2713', fg='green'))
+
     from renku.core.commands.init import (
-        fetch_remote_template,
-        validate_template,
+        fetch_remote_template, validate_template, create_from_template
     )
 
     if not client.use_external_storage:
@@ -259,37 +263,16 @@ def template_init(
         )
         click.echo(message, nl=False)
         template_path = fetch_remote_template(
-            tmpfolder, template_url, template_name, template_branch
+            template_url, template_name, template_branch, tmpfolder
         )
-        click.echo(' DONE')
+        print_done()
 
         message = f'Validating template...'
         click.echo(message, nl=False)
         validate_template(template_path)
-        click.echo(' DONE')
+        print_done()
 
         message = f'Initialize new Renku repository...'
         click.echo(message, nl=False)
-        # init_repository(ctx, client, force, description)
-        click.echo('TO BE IMPLEMENTED')
-
-    # ? uncomment for printing arguments
-    # click.echo(f'''
-    # *** TEMP: provided data:***
-    # path: {path}
-    # name: {name}
-    # template_url: {template_url}
-    # template_name: {template_name}
-    # template_branch: {template_branch}
-    # force: {force}
-    # description: {description}''')
-
-    # STEPS IN CORE
-    # D - verify template is a valid git repo with renku template files
-    #   (e.g.
-    #   https://github.com/SwissDataScienceCenter/renku-project-template.git)
-    #   including template_branch
-    # D - copy data to a local folder
-    # D - validate template data
-    # U - initialize new git repo with the files and the commit
-    # push (copy to relevant location if FS or push to GitLab if UI)
+        create_from_template(template_path, client, name, description, force)
+        print_done()

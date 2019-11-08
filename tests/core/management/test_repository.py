@@ -18,7 +18,9 @@
 """Repository tests."""
 
 import os
+import tempfile
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -48,7 +50,7 @@ def test_init_empty_repository(local_client):
 
 
 def test_update_repository_metadata(local_client):
-    """Test updating metadata in an empty repository"""
+    """Test updating metadata in an empty repository."""
     local_client.init_empty_repository()
     local_client.update_repository_metadata()
     ls = sorted(os.listdir(local_client.path))
@@ -56,9 +58,40 @@ def test_update_repository_metadata(local_client):
     assert ls[1] == '.renku'
 
 
+def test_import_from_template(local_client):
+    """Test importing data from template."""
+    OUTPUT_FILE = 'metadata.yml'
+    local_client.init_empty_repository()
+    with tempfile.TemporaryDirectory() as tempdir:
+        template_path = Path(tempdir)
+        fake_template_file = template_path / OUTPUT_FILE
+        with fake_template_file.open('w') as dest:
+            dest.writelines([
+                'name: {{ name }}', 'description: {{ description }}',
+                'created: {{ date_created }}', 'updated: {{ date_updated }}'
+            ])
+            metadata = {
+                'name': 'name',
+                'description': 'description',
+                'date_created': 'now',
+                'date_updated': 'now',
+            }
+        local_client.import_from_template(template_path, metadata)
+        compiled_file = local_client.path / OUTPUT_FILE
+        with open(compiled_file) as fr:
+            compiled_content = fr.read()
+            expected_content = (
+                'name: name'
+                'description: description'
+                'created: now'
+                'updated: now'
+            )
+            assert compiled_content == expected_content
+
+
 # TODO: update this, should be checked somewhere else
 def test_commit_cloned_repo(local_client):
-    """Test committing after initializing a new repo"""
+    """Test committing after initializing a new repo."""
     local_client.init_empty_repository()
     local_client.update_repository_metadata()
     with local_client.commit():

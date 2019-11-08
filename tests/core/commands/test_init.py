@@ -24,7 +24,9 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from renku.core.commands.init import fetch_remote_template, validate_template
+from renku.core.commands.init import (
+    fetch_remote_template, validate_template, create_from_template
+)
 from renku.core.management.config import RENKU_HOME
 
 TEMPLATE_URL = (
@@ -33,6 +35,7 @@ TEMPLATE_URL = (
 TEMPLATE_FOLDER = 'python-minimal'
 TEMPLATE_BRANCH = 'master'
 FAKE = 'NON_EXISTING'
+METADATA = {'name': 'myname', 'description': 'nodesc'}
 
 
 def raises(error):
@@ -62,7 +65,7 @@ def raises(error):
 )
 @pytest.mark.integration
 def test_fetch_remote_template(url, folder, branch, result, error):
-    """Test remote templates are correctly fetched"""
+    """Test remote templates are correctly fetched."""
     with TemporaryDirectory() as tempdir:
         with raises(error):
             temp_folder = fetch_remote_template(url, folder, branch, tempdir)
@@ -74,7 +77,7 @@ def test_fetch_remote_template(url, folder, branch, result, error):
 
 @pytest.mark.integration
 def test_validate_template():
-    """Test template validation"""
+    """Test template validation."""
 
     with TemporaryDirectory() as tempdir:
         # file error
@@ -93,3 +96,20 @@ def test_validate_template():
             TEMPLATE_URL, TEMPLATE_FOLDER, TEMPLATE_BRANCH, tempdir
         )
         assert validate_template(template_folder) is True
+
+
+@pytest.mark.integration
+def test_create_from_template(local_client):
+    """Test repository creation from a template."""
+
+    with TemporaryDirectory() as tempdir:
+        template_folder = fetch_remote_template(
+            TEMPLATE_URL, TEMPLATE_FOLDER, TEMPLATE_BRANCH, tempdir
+        )
+        create_from_template(
+            template_folder, local_client, METADATA['name'],
+            METADATA['description']
+        )
+
+        # TODO! assert on data in local_client.path
+        assert True

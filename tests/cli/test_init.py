@@ -127,3 +127,6 @@ def test_init_force_in_empty_dir(isolated_runner):
     assert not new_project.exists()
     result = runner.invoke(cli, ['init', '--force', 'test-new-project'])
     assert 0 == result.exit_code
+
+
+# ! TODO: add CLI test

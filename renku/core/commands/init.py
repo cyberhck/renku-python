@@ -19,6 +19,8 @@
 
 import os
 import tempfile
+from pathlib import Path
+from datetime import datetime, timezone
 
 import git
 
@@ -82,5 +84,20 @@ def validate_template(template_path):
     return True
 
 
-# ! TODO
-# def create_new_repo(client)
+def create_from_template(
+    template_path, client, name=None, description=None, force=None
+):
+    """Initialize a new project from a template."""
+    # create empty repo
+    client.init_empty_repository(force)
+
+    # initialize with proper medata
+    now = datetime.now(timezone.utc)
+    metadata = {
+        'name': name,
+        'description': description,
+        'date_created': now,
+        'date_updated': now,
+    }
+    with client.commit():
+        client.import_from_template(Path(template_path), metadata, force)
