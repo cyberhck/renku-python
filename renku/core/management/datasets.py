@@ -445,7 +445,7 @@ class DatasetsApiMixin(object):
         sources = self._resolve_paths(u.path, sources)
 
         # Get all files from repo that match sources
-        repo, repo_path = self._prepare_git_repo(url, ref)
+        repo, repo_path = self.prepare_git_repo(url, ref)
         copied_sources = set()
         files = set()
         for file in repo.head.commit.tree.traverse():
@@ -726,7 +726,7 @@ class DatasetsApiMixin(object):
             if url in visited_repos:
                 repo, repo_path, remote_client = visited_repos[url]
             else:
-                repo, repo_path = self._prepare_git_repo(url, ref)
+                repo, repo_path = self.prepare_git_repo(url, ref)
                 remote_client = LocalClient(repo_path)
                 visited_repos[url] = repo, repo_path, remote_client
 
@@ -815,7 +815,10 @@ class DatasetsApiMixin(object):
 
         return deleted_files
 
-    def _prepare_git_repo(self, url, ref):
+    def prepare_git_repo(self, url, ref=None):
+        """Clone and cache a Git repo."""
+        RENKU_BRANCH = 'renku-default-branch'
+
         def checkout(repo, ref):
             try:
                 repo.git.checkout(ref)
@@ -826,7 +829,6 @@ class DatasetsApiMixin(object):
                     )
                 )
 
-        RENKU_BRANCH = 'renku-default-branch'
         ref = ref or RENKU_BRANCH
         u = GitURL.parse(url)
         path = u.pathname
