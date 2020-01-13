@@ -160,6 +160,7 @@ install_requires = [
     'patool>=1.12',
     'psutil>=5.4.7',
     'pyasn1>=0.4.5',
+    'pyDataverse>=0.2.1',
     'PyYAML>=3.12',
     'pyld>=1.0.3',
     'pyOpenSSL>=19.0.0',
