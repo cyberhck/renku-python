@@ -25,9 +25,9 @@ from string import Template
 
 import attr
 import requests
-from pyDataverse.api import Api
 from tqdm import tqdm
 
+from renku.core import errors
 from renku.core.commands.providers.api import ExporterApi, ProviderApi
 from renku.core.commands.providers.doi import DOIProvider
 from renku.core.models.datasets import Dataset, DatasetFile
@@ -35,12 +35,14 @@ from renku.core.utils.doi import extract_doi, is_doi
 
 DATAVERSE_DEMO_URL = 'https://demo.dataverse.org/'
 
-DATAVERSE_API_PATH = 'api'
+DATAVERSE_API_PATH = 'api/v1'
 
 DATAVERSE_VERSION_API = 'info/version'
 DATAVERSE_METADATA_API = 'datasets/export'
 DATAVERSE_FILE_API = 'access/datafile/:persistentId/'
 DATAVERSE_EXPORTER = 'schema.org'
+
+DATAVERSE_DATASET_API = 'dataverses/{dataverseName}/datasets'
 
 
 def check_dataverse_uri(url):
@@ -275,6 +277,7 @@ class DataverseFileSerializer:
 
         return urllib.parse.urlparse(file_url)
 
+
 @attr.s
 class DataverseExporter(ExporterApi):
     """Dataverse export manager."""
@@ -289,11 +292,32 @@ class DataverseExporter(ExporterApi):
 
     def access_token_url(self):
         """Endpoint for creation of access token."""
-        return urllib.parse.urljoin(self.base_url, '/dataverseuser.xhtml?selectTab=apiTokenTab')
+        return urllib.parse.urljoin(
+            self.base_url, '/dataverseuser.xhtml?selectTab=apiTokenTab'
+        )
 
-    def export(self, publish, tag=None):
+    def export(self, publish, base_url=None, dataverse=None, **kwargs):
         """Execute export process."""
-        api = Api(base_url=self.base_url, api_token=self.access_token)
+        deposition = _DataverseDeposition(
+            base_url=self.base_url, access_token=self.access_token
+        )
+        metadata = self._get_dataset_metadata()
+        response = deposition.create_dataset(
+            dataverse_name='SDSC-Test', metadata=metadata
+        )
+        dataset_pid = response.json()['data']['persistentId']
+
+        with tqdm(total=len(self.dataset.files)) as progressbar:
+            for file_ in self.dataset.files:
+                deposition.upload_file(file_.full_path)
+                progressbar.update(1)
+
+        if publish:
+            deposition.publish_dataset()
+
+        return dataset_pid
+
+    def _get_dataset_metadata(self):
         authors, contacts = self._get_creators()
         metadata_template = Template(DATASET_METADATA_TEMPLATE)
         metadata = metadata_template.substitute(
@@ -302,24 +326,7 @@ class DataverseExporter(ExporterApi):
             contacts=json.dumps(contacts),
             description=self.dataset.description
         )
-        metadata = json.loads(metadata)
-
-        response = api.create_dataset('Demo', json.dumps(metadata))
-        dataset_pid = response.json()['data']['persistentId']
-
-        # Step 3. Upload all files to created deposition
-        with tqdm(total=len(self.dataset.files)) as progressbar:
-            for file_ in self.dataset.files:
-                api.upload_file(dataset_pid, file_.full_path)
-                progressbar.update(1)
-
-        # Step 4. Publish newly created deposition
-        if publish:
-            r = api.publish_dataset(pid=dataset_pid, type='major')
-            print('==== PUB', r.text)
-            # return deposition.published_at
-
-        return dataset_pid
+        return json.loads(metadata)
 
     def _get_creators(self):
         authors = []
@@ -327,14 +334,116 @@ class DataverseExporter(ExporterApi):
 
         for creator in self.dataset.creator:
             author_template = Template(AUTHOR_METADATA_TEMPLATE)
-            author = author_template.substitute(name=creator.name, affiliation=creator.affiliation)
+            author = author_template.substitute(
+                name=creator.name, affiliation=creator.affiliation
+            )
             authors.append(json.loads(author))
 
             contact_template = Template(CONTACT_METADATA_TEMPLATE)
-            contact = contact_template.substitute(name=creator.name, email=creator.email)
+            contact = contact_template.substitute(
+                name=creator.name, email=creator.email
+            )
             contacts.append(json.loads(contact))
 
         return authors, contacts
+
+
+@attr.s
+class _DataverseDeposition:
+    """Dataverse record for deposit."""
+
+    base_url = attr.ib(default=DATAVERSE_DEMO_URL, kw_only=True)
+    access_token = attr.ib(kw_only=True)
+    dataset_pid = attr.ib(default=None)
+
+    def _post(self, api_path, metadata):
+        url = pathlib.posixpath.join(
+            self.base_url, DATAVERSE_API_PATH, api_path
+        )
+        headers = {'X-Dataverse-key': self.access_token}
+        # FIXME catch errors
+        return requests.post(url=url, json=metadata, headers=headers)
+
+    def create_dataset(self, dataverse_name, metadata):
+        """Create a dataset in a given dataverse."""
+        api_path = DATAVERSE_DATASET_API.format(dataverseName=dataverse_name)
+        response = self._post(api_path=api_path, metadata=metadata)
+        # api = Api(base_url=self.base_url, api_token=self.access_token)
+        # response = api.create_dataset(dataverse, json.dumps(metadata))
+
+        if response.status_code != 201:
+            error_msg = response.json()['message']
+            print('==== CREATE FAILED', error_msg)
+            # FIXME raise a better error here
+            raise errors.OperationError(
+                'ERROR: HTTP {} - Cannot create dataset. Message: {}'.format(
+                    response.status_code, error_msg
+                )
+            )
+
+        self.dataset_pid = response.json()['data']['persistentId']
+        return response
+
+    def upload_file(self, filepath):
+        """Upload a file to a previously-created dataset."""
+        if self.dataset_pid is None:
+            raise ValueError('Dataset not created.')
+
+        # api_path = '/datasets/:persistentId/add?persistentId={0}'.format(self.dataset_pid)
+        # url = pathlib.posixpath.join(self.base_url, DATAVERSE_API_PATH, api_path)
+        headers = {'X-Dataverse-key': self.access_token}
+
+        url = self._make_url(
+            'datasets/:persistentId/add', persistentId=self.dataset_pid
+        )
+        print('==== URL', url)
+
+        # FIXME
+        params = {'directoryLabel': 'some/directory/structure'}
+        payload = dict(jsonData=json.dumps(params))
+
+        # FIXME
+        files = {'file': ('sample_file.txt', open(filepath, 'rb'))}
+
+        response = requests.post(
+            url, data=payload, files=files, headers=headers
+        )
+
+        print('==== RESP', response.status_code, response.text)
+
+        # api = Api(base_url=self.base_url, api_token=self.access_token)
+        # return api.upload_file(self.dataset_pid, filepath)
+
+        return response
+
+    def publish_dataset(self):
+        """Publish a previously-created dataset."""
+        if self.dataset_pid is None:
+            raise ValueError('Dataset not created.')
+
+        url = self._make_url(
+            'datasets/:persistentId/actions/:publish',
+            persistentId=self.dataset_pid,
+            type='major'
+        )
+        headers = {'X-Dataverse-key': self.access_token}
+
+        response = requests.post(url=url, headers=headers)
+        print('==== RESP', response.status_code, response.text)
+        return response
+
+        # api = Api(base_url=self.base_url, api_token=self.access_token)
+        # api.publish_dataset(pid=self.dataset_pid, type='major')
+
+    def _make_url(self, api_path, **query_params):
+        """Create URL for creating a dataset."""
+        url_parts = urlparse.urlparse(self.base_url)
+        path = pathlib.posixpath.join(DATAVERSE_API_PATH, api_path)
+
+        # args_dict = {'persistentId': self.dataset_pid}
+        query_params = urllib.parse.urlencode(query_params)
+        url_parts = url_parts._replace(path=path, query=query_params)
+        return urllib.parse.urlunparse(url_parts)
 
 
 DATASET_METADATA_TEMPLATE = '''

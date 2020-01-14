@@ -51,6 +51,6 @@ class ExporterApi(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def export(self, publish, tag=None):
+    def export(self, publish, **kwargs):
         """Execute export process."""
         pass
