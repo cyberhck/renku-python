@@ -16,18 +16,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Dataverse API integration."""
+import json
 import pathlib
 import re
 import urllib
 import urllib.parse as urlparse
+from string import Template
 
 import attr
 import requests
+from pyDataverse.api import Api
+from tqdm import tqdm
 
 from renku.core.commands.providers.api import ExporterApi, ProviderApi
 from renku.core.commands.providers.doi import DOIProvider
 from renku.core.models.datasets import Dataset, DatasetFile
 from renku.core.utils.doi import extract_doi, is_doi
+
+DATAVERSE_DEMO_URL = 'https://demo.dataverse.org/'
 
 DATAVERSE_API_PATH = 'api'
 
@@ -156,7 +162,7 @@ class DataverseProvider(ProviderApi):
 
     def get_exporter(self, dataset, access_token):
         """Create export manager for given dataset."""
-        raise NotImplementedError()
+        return DataverseExporter(dataset=dataset, access_token=access_token)
 
 
 @attr.s
@@ -269,8 +275,150 @@ class DataverseFileSerializer:
 
         return urllib.parse.urlparse(file_url)
 
-
+@attr.s
 class DataverseExporter(ExporterApi):
     """Dataverse export manager."""
 
-    pass
+    dataset = attr.ib(kw_only=True)
+    access_token = attr.ib(kw_only=True)
+    base_url = attr.ib(default=DATAVERSE_DEMO_URL, kw_only=True)
+
+    def set_access_token(self, access_token):
+        """Set access token."""
+        self.access_token = access_token
+
+    def access_token_url(self):
+        """Endpoint for creation of access token."""
+        return urllib.parse.urljoin(self.base_url, '/dataverseuser.xhtml?selectTab=apiTokenTab')
+
+    def export(self, publish, tag=None):
+        """Execute export process."""
+        api = Api(base_url=self.base_url, api_token=self.access_token)
+        authors, contacts = self._get_creators()
+        metadata_template = Template(DATASET_METADATA_TEMPLATE)
+        metadata = metadata_template.substitute(
+            name=self.dataset.name,
+            authors=json.dumps(authors),
+            contacts=json.dumps(contacts),
+            description=self.dataset.description
+        )
+        metadata = json.loads(metadata)
+
+        response = api.create_dataset('Demo', json.dumps(metadata))
+        dataset_pid = response.json()['data']['persistentId']
+
+        # Step 3. Upload all files to created deposition
+        with tqdm(total=len(self.dataset.files)) as progressbar:
+            for file_ in self.dataset.files:
+                api.upload_file(dataset_pid, file_.full_path)
+                progressbar.update(1)
+
+        # Step 4. Publish newly created deposition
+        if publish:
+            r = api.publish_dataset(pid=dataset_pid, type='major')
+            print('==== PUB', r.text)
+            # return deposition.published_at
+
+        return dataset_pid
+
+    def _get_creators(self):
+        authors = []
+        contacts = []
+
+        for creator in self.dataset.creator:
+            author_template = Template(AUTHOR_METADATA_TEMPLATE)
+            author = author_template.substitute(name=creator.name, affiliation=creator.affiliation)
+            authors.append(json.loads(author))
+
+            contact_template = Template(CONTACT_METADATA_TEMPLATE)
+            contact = contact_template.substitute(name=creator.name, email=creator.email)
+            contacts.append(json.loads(contact))
+
+        return authors, contacts
+
+
+DATASET_METADATA_TEMPLATE = '''
+{
+    "datasetVersion": {
+        "metadataBlocks": {
+            "citation": {
+                "fields": [
+                    {
+                        "value": "${name}",
+                        "typeClass": "primitive",
+                        "multiple": false,
+                        "typeName": "title"
+                    },
+                    {
+                        "value": ${authors},
+                        "typeClass": "compound",
+                        "multiple": true,
+                        "typeName": "author"
+                    },
+                    {
+                        "value": ${contacts},
+                        "typeClass": "compound",
+                        "multiple": true,
+                        "typeName": "datasetContact"
+                    },
+                    {
+                        "value": [
+                            {
+                                "dsDescriptionValue": {
+                                    "value": "${description}",
+                                    "multiple": false,
+                                    "typeClass": "primitive",
+                                    "typeName": "dsDescriptionValue"
+                                }
+                            }
+                        ],
+                        "typeClass": "compound",
+                        "multiple": true,
+                        "typeName": "dsDescription"
+                    },
+                    {
+                        "value": [],
+                        "typeClass": "controlledVocabulary",
+                        "multiple": true,
+                        "typeName": "subject"
+                    }
+                ],
+                "displayName": "Citation Metadata"
+            }
+        }
+    }
+}'''
+
+AUTHOR_METADATA_TEMPLATE = '''
+{
+    "authorName": {
+        "value": "${name}",
+        "typeClass": "primitive",
+        "multiple": false,
+        "typeName": "authorName"
+    },
+    "authorAffiliation": {
+        "value": "${affiliation}",
+        "typeClass": "primitive",
+        "multiple": false,
+        "typeName": "authorAffiliation"
+    }
+}
+'''
+
+CONTACT_METADATA_TEMPLATE = '''
+{
+    "datasetContactEmail": {
+        "typeClass": "primitive",
+        "multiple": false,
+        "typeName": "datasetContactEmail",
+        "value": "${email}"
+    },
+    "datasetContactName": {
+        "typeClass": "primitive",
+        "multiple": false,
+        "typeName": "datasetContactName",
+        "value": "${name}"
+    }
+}
+'''
